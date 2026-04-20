@@ -8,3 +8,10 @@ body {
 #root {
   min-height: 100vh;
 }
+
+/* Comic book style font for speech bubbles */
+.font-comic {
+  font-family: 'Comic Sans MS', 'Comic Neue', 'Chalkboard SE', 'Marker Felt', cursive;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}

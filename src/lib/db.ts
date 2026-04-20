@@ -19,6 +19,7 @@ export interface Song {
   title: string
   composer?: string
   source?: string // e.g., anime title, movie name, game title
+  albumArt?: ArrayBuffer // album art image data
   key?: string
   timeSignature?: string
   bpm?: number
@@ -29,6 +30,7 @@ export interface Song {
   favorite: boolean
   createdAt: Date
   updatedAt: Date
+  lastOpenedAt?: Date // track when song was last viewed
 }
 
 // Sheet music files attached to a song
@@ -76,6 +78,35 @@ export interface SongTag {
   tagId: string
 }
 
+// Annotation types for PDF markup
+export type AnnotationType = 'sticky' | 'symbol' | 'arrow'
+export type StickyColor = 'yellow' | 'pink' | 'blue' | 'green'
+
+// Annotations on sheet music
+export interface Annotation {
+  id: string
+  songId: string
+  sheetMusicId: string
+  page: number
+  type: AnnotationType
+  x: number           // percentage 0-100 of page width
+  y: number           // percentage 0-100 of page height
+  content: string     // text content or symbol character
+  comment?: string    // optional comment (for symbols)
+  color?: StickyColor // for sticky notes
+  // For arrows / tail anchor
+  x2?: number         // end point x percentage
+  y2?: number         // end point y percentage
+  // For resizable bubbles
+  width?: number      // width in pixels
+  height?: number     // height in pixels
+  fontSize?: number   // font size in pixels
+  opacity?: number    // background opacity 0-1
+  borderless?: boolean // hide border
+  createdAt: Date
+  updatedAt: Date
+}
+
 // Database instance with typed tables
 const db = new Dexie('FermataDB') as Dexie & {
   songs: EntityTable<Song, 'id'>
@@ -84,15 +115,17 @@ const db = new Dexie('FermataDB') as Dexie & {
   recordings: EntityTable<Recording, 'id'>
   tags: EntityTable<Tag, 'id'>
   songTags: EntityTable<SongTag, 'songId'>
+  annotations: EntityTable<Annotation, 'id'>
 }
 
-db.version(1).stores({
-  songs: 'id, title, composer, category, difficulty, favorite, createdAt, updatedAt',
+db.version(3).stores({
+  songs: 'id, title, composer, category, difficulty, favorite, createdAt, updatedAt, lastOpenedAt',
   sheetMusic: 'id, songId, fileType, createdAt',
   practiceLogs: 'id, songId, date, rating',
   recordings: 'id, songId, date',
   tags: 'id, &name', // unique name
   songTags: '[songId+tagId], songId, tagId', // composite primary key
+  annotations: 'id, songId, sheetMusicId, page, type, createdAt',
 })
 
 export { db }
