@@ -1,5 +1,5 @@
 import { useState, useRef, type DragEvent, type ChangeEvent } from 'react'
-import { X, Upload, ChevronDown, ChevronUp } from 'lucide-react'
+import { X, Upload, ChevronDown, ChevronUp, ImagePlus } from 'lucide-react'
 import { db, type Category, type Difficulty, type FileType } from '../lib/db'
 
 interface AddSongModalProps {
@@ -70,10 +70,13 @@ export function AddSongModal({ isOpen, onClose, onSongAdded }: AddSongModalProps
   const [bpm, setBpm] = useState('')
   const [notes, setNotes] = useState('')
   const [file, setFile] = useState<File | null>(null)
+  const [albumArt, setAlbumArt] = useState<File | null>(null)
+  const [albumArtPreview, setAlbumArtPreview] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [showMore, setShowMore] = useState(false)
   const [saving, setSaving] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const albumArtInputRef = useRef<HTMLInputElement>(null)
 
   const handleFile = (f: File) => {
     const fileType = getFileType(f)
@@ -104,6 +107,14 @@ export function AddSongModal({ isOpen, onClose, onSongAdded }: AddSongModalProps
     if (f) handleFile(f)
   }
 
+  const handleAlbumArtChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (f && f.type.startsWith('image/')) {
+      setAlbumArt(f)
+      setAlbumArtPreview(URL.createObjectURL(f))
+    }
+  }
+
   const handleSave = async () => {
     if (!title.trim()) {
       alert('Please enter a title')
@@ -115,6 +126,12 @@ export function AddSongModal({ isOpen, onClose, onSongAdded }: AddSongModalProps
       const songId = crypto.randomUUID()
       const now = new Date()
 
+      // Process album art if provided
+      let albumArtData: ArrayBuffer | undefined
+      if (albumArt) {
+        albumArtData = await albumArt.arrayBuffer()
+      }
+
       // Create song record
       await db.songs.add({
         id: songId,
@@ -122,6 +139,7 @@ export function AddSongModal({ isOpen, onClose, onSongAdded }: AddSongModalProps
         composer: composer.trim() || undefined,
         category,
         source: source.trim() || undefined,
+        albumArt: albumArtData,
         difficulty: difficulty || undefined,
         youtubeUrl: youtubeUrl.trim() || undefined,
         key: keySignature.trim() || undefined,
@@ -156,6 +174,9 @@ export function AddSongModal({ isOpen, onClose, onSongAdded }: AddSongModalProps
       setBpm('')
       setNotes('')
       setFile(null)
+      setAlbumArt(null)
+      if (albumArtPreview) URL.revokeObjectURL(albumArtPreview)
+      setAlbumArtPreview(null)
       setShowMore(false)
 
       onSongAdded()
@@ -197,36 +218,61 @@ export function AddSongModal({ isOpen, onClose, onSongAdded }: AddSongModalProps
 
         {/* Content */}
         <div className="p-4 space-y-4">
-          {/* File drop zone */}
-          <div
-            onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
-            onDragLeave={() => setIsDragging(false)}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-              isDragging
-                ? 'border-blue-500 bg-blue-500/10'
-                : file
-                ? 'border-green-500/50 bg-green-500/5'
-                : 'border-zinc-700 hover:border-zinc-600 hover:bg-zinc-800/50'
-            }`}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.png,.jpg,.jpeg,.webp,.musicxml,.mxl"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-            <Upload size={32} className={`mx-auto mb-2 ${file ? 'text-green-500' : 'text-zinc-500'}`} />
-            {file ? (
-              <p className="text-green-400">{file.name}</p>
-            ) : (
-              <>
-                <p className="text-zinc-300">Drop sheet music here</p>
-                <p className="text-sm text-zinc-500 mt-1">PDF, image, or MusicXML</p>
-              </>
-            )}
+          {/* Album Art + Sheet Music row */}
+          <div className="flex gap-4">
+            {/* Album Art */}
+            <div
+              onClick={() => albumArtInputRef.current?.click()}
+              className="w-32 h-32 shrink-0 border-2 border-dashed border-zinc-700 rounded-lg cursor-pointer hover:border-zinc-600 hover:bg-zinc-800/50 transition-colors overflow-hidden flex items-center justify-center"
+            >
+              <input
+                ref={albumArtInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleAlbumArtChange}
+                className="hidden"
+              />
+              {albumArtPreview ? (
+                <img src={albumArtPreview} alt="Album art" className="w-full h-full object-cover" />
+              ) : (
+                <div className="text-center">
+                  <ImagePlus size={24} className="mx-auto text-zinc-500 mb-1" />
+                  <p className="text-xs text-zinc-500">Cover</p>
+                </div>
+              )}
+            </div>
+
+            {/* File drop zone */}
+            <div
+              onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`flex-1 border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                isDragging
+                  ? 'border-blue-500 bg-blue-500/10'
+                  : file
+                  ? 'border-green-500/50 bg-green-500/5'
+                  : 'border-zinc-700 hover:border-zinc-600 hover:bg-zinc-800/50'
+              }`}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.webp,.musicxml,.mxl"
+                onChange={handleFileChange}
+                className="hidden"
+              />
+              <Upload size={28} className={`mx-auto mb-2 ${file ? 'text-green-500' : 'text-zinc-500'}`} />
+              {file ? (
+                <p className="text-green-400 text-sm">{file.name}</p>
+              ) : (
+                <>
+                  <p className="text-zinc-300 text-sm">Drop sheet music here</p>
+                  <p className="text-xs text-zinc-500 mt-1">PDF, image, or MusicXML</p>
+                </>
+              )}
+            </div>
           </div>
 
           {/* Title (required) */}
