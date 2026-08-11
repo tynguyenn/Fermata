@@ -79,7 +79,18 @@ export interface SongTag {
 }
 
 // Annotation types for PDF markup
-export type AnnotationType = 'sticky' | 'symbol' | 'arrow'
+export type AnnotationType = 'sticky' | 'symbol' | 'arrow' | 'text'
+
+// Text notes (margin notes, separate from annotations)
+export interface TextNote {
+  id: string
+  sheetMusicId: string
+  x: number  // percentage position
+  y: number  // percentage position
+  content: string
+  createdAt: Date
+  updatedAt: Date
+}
 export type StickyColor = 'yellow' | 'pink' | 'blue' | 'green'
 
 // Annotations on sheet music
@@ -116,9 +127,10 @@ const db = new Dexie('FermataDB') as Dexie & {
   tags: EntityTable<Tag, 'id'>
   songTags: EntityTable<SongTag, 'songId'>
   annotations: EntityTable<Annotation, 'id'>
+  textNotes: EntityTable<TextNote, 'id'>
 }
 
-db.version(3).stores({
+db.version(4).stores({
   songs: 'id, title, composer, category, difficulty, favorite, createdAt, updatedAt, lastOpenedAt',
   sheetMusic: 'id, songId, fileType, createdAt',
   practiceLogs: 'id, songId, date, rating',
@@ -126,6 +138,7 @@ db.version(3).stores({
   tags: 'id, &name', // unique name
   songTags: '[songId+tagId], songId, tagId', // composite primary key
   annotations: 'id, songId, sheetMusicId, page, type, createdAt',
+  textNotes: 'id, sheetMusicId, createdAt',
 })
 
 export { db }

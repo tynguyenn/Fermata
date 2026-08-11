@@ -1,5 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Settings, X } from 'lucide-react'
+import { Settings, X, ChevronDown, ChevronUp } from 'lucide-react'
+
+// Piano key definitions for 2 octaves
+const whiteKeys = ['C', 'D', 'E', 'F', 'G', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'A', 'B'] as const
+const blackKeyPositions = [
+  { note: 'C#', position: 0 },
+  { note: 'D#', position: 1 },
+  { note: 'F#', position: 3 },
+  { note: 'G#', position: 4 },
+  { note: 'A#', position: 5 },
+  { note: 'C#', position: 7 },
+  { note: 'D#', position: 8 },
+  { note: 'F#', position: 10 },
+  { note: 'G#', position: 11 },
+  { note: 'A#', position: 12 },
+] as const
 
 // Interval definitions with semitone count
 const intervals = [
@@ -56,6 +71,10 @@ export function IntervalGame() {
   const [clef, setClef] = useState<'treble' | 'bass' | 'both'>('treble')
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null)
   const [direction, setDirection] = useState<'ascending' | 'descending' | 'both'>('ascending')
+  const [showSemitonesKey, setShowSemitonesKey] = useState(false)
+  const [selectedRootKey, setSelectedRootKey] = useState<number | null>(null) // clicked root note (semitone index)
+  const [hoveredKey, setHoveredKey] = useState<number | null>(null) // currently hovered key
+  const [hoveredStaffNote, setHoveredStaffNote] = useState<'top' | 'bottom' | null>(null) // for ghost note inversion
 
   // Enabled intervals (all enabled by default)
   const [enabledIntervals, setEnabledIntervals] = useState<Set<number>>(
@@ -71,6 +90,34 @@ export function IntervalGame() {
   const staffWidth = 700
   const svgWidth = staffWidth + paddingX * 2
   const svgHeight = staffHeight + paddingY * 2
+
+  // Piano dimensions (2 octaves = 14 white keys)
+  const pianoWidth = svgWidth
+  const whiteKeyWidth = pianoWidth / 14
+  const whiteKeyHeight = 120
+  const blackKeyWidth = whiteKeyWidth * 0.6
+  const blackKeyHeight = whiteKeyHeight * 0.6
+
+  // Calculate interval from selected root to hovered key
+  const getHoveredInterval = () => {
+    if (selectedRootKey === null || hoveredKey === null) return null
+    if (selectedRootKey === hoveredKey) return null // Same note, no interval
+
+    // Calculate semitone distance (always positive, going up)
+    let semitones = hoveredKey - selectedRootKey
+    if (semitones < 0) semitones += 24 // Wrap around for 2 octaves
+    if (semitones > 12) semitones = semitones % 12 // Reduce to within octave
+    if (semitones === 0) return null
+
+    return intervals.find(i => i.semitones === semitones)
+  }
+  const hoveredInterval = getHoveredInterval()
+
+  // Get the note name for display
+  const getNoteNameFromSemitone = (semitone: number) => {
+    const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    return names[semitone % 12]
+  }
 
   // Note positions on staff
   const treblePositions: Record<string, number> = {
@@ -240,6 +287,56 @@ export function IntervalGame() {
   // Get the correct answer for display
   const correctInterval = intervals.find(i => i.semitones === currentInterval)
 
+  // Calculate ghost note for inversion visualization
+  // When hovering bottom note: show top note shifted down an octave (closer to bottom)
+  // When hovering top note: show bottom note shifted up an octave (closer to top)
+  const getGhostNote = () => {
+    if (!hoveredStaffNote) return null
+
+    if (hoveredStaffNote === 'bottom') {
+      // Ghost = top note moved down an octave
+      const ghostNote = topNote.note
+      const ghostOctave = topNote.octave - 1
+      const ghostKey = `${ghostNote.replace('#', '').replace('b', '')}${ghostOctave}`
+      const ghostPosition = notePositions[ghostKey]
+      if (ghostPosition === undefined) return null
+      return {
+        note: ghostNote,
+        octave: ghostOctave,
+        position: ghostPosition,
+        y: paddingY + ghostPosition * lineSpacing,
+        hasSharp: ghostNote.includes('#'),
+        hasFlat: ghostNote.includes('b'),
+        ledgerLines: getLedgerLines(ghostPosition)
+      }
+    } else {
+      // Ghost = bottom note moved up an octave
+      const ghostNote = bottomNote.note
+      const ghostOctave = bottomNote.octave + 1
+      const ghostKey = `${ghostNote.replace('#', '').replace('b', '')}${ghostOctave}`
+      const ghostPosition = notePositions[ghostKey]
+      if (ghostPosition === undefined) return null
+      return {
+        note: ghostNote,
+        octave: ghostOctave,
+        position: ghostPosition,
+        y: paddingY + ghostPosition * lineSpacing,
+        hasSharp: ghostNote.includes('#'),
+        hasFlat: ghostNote.includes('b'),
+        ledgerLines: getLedgerLines(ghostPosition)
+      }
+    }
+  }
+
+  const ghostNote = getGhostNote()
+  const inversionSemitones = currentInterval > 0 ? 12 - currentInterval : 0
+  const inversionInterval = intervals.find(i => i.semitones === inversionSemitones)
+
+  // Combine ghost note ledger lines with existing ones
+  const allLedgerLinesWithGhost = ghostNote
+    ? [...new Set([...allLedgerLines, ...ghostNote.ledgerLines])]
+    : allLedgerLines
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -299,28 +396,89 @@ export function IntervalGame() {
               {displayClef === 'treble' ? '𝄞' : '𝄢'}
             </text>
 
-            {/* Ledger lines */}
-            {allLedgerLines.map((pos) => (
-              <line
-                key={pos}
-                x1={noteX - 25}
-                y1={paddingY + pos * lineSpacing}
-                x2={noteX + 25}
-                y2={paddingY + pos * lineSpacing}
-                stroke="#222"
-                strokeWidth="1.5"
-              />
-            ))}
+            {/* Ledger lines (including ghost note ledger lines) */}
+            {allLedgerLinesWithGhost.map((pos) => {
+              const isGhostLedger = ghostNote?.ledgerLines.includes(pos) && !allLedgerLines.includes(pos)
+              return (
+                <line
+                  key={pos}
+                  x1={noteX - 25}
+                  y1={paddingY + pos * lineSpacing}
+                  x2={noteX + 25}
+                  y2={paddingY + pos * lineSpacing}
+                  stroke={isGhostLedger ? '#3b82f6' : '#222'}
+                  strokeWidth="1.5"
+                  opacity={isGhostLedger ? 0.5 : 1}
+                />
+              )
+            })}
 
-            {/* Bottom note */}
-            <g>
+            {/* Ghost note (shown when hovering a note) */}
+            {ghostNote && (
+              <g opacity={0.5}>
+                {ghostNote.hasSharp && (
+                  <text
+                    x={noteX - 40}
+                    y={ghostNote.y + 14}
+                    fontSize={42}
+                    fontFamily="Bravura, Leland, serif"
+                    fill="#3b82f6"
+                  >
+                    ♯
+                  </text>
+                )}
+                {ghostNote.hasFlat && (
+                  <text
+                    x={noteX - 50}
+                    y={ghostNote.y + 10}
+                    fontSize={44}
+                    fontFamily="Bravura, Leland, serif"
+                    fill="#3b82f6"
+                  >
+                    ♭
+                  </text>
+                )}
+                <g transform={`rotate(-20 ${noteX} ${ghostNote.y})`}>
+                  <ellipse
+                    cx={noteX}
+                    cy={ghostNote.y}
+                    rx={14}
+                    ry={10}
+                    fill="#3b82f6"
+                  />
+                  <ellipse
+                    cx={noteX}
+                    cy={ghostNote.y}
+                    rx={8}
+                    ry={5}
+                    fill="white"
+                    transform={`rotate(40 ${noteX} ${ghostNote.y})`}
+                  />
+                </g>
+              </g>
+            )}
+
+            {/* Bottom note with hover detection */}
+            <g
+              onMouseEnter={() => setHoveredStaffNote('bottom')}
+              onMouseLeave={() => setHoveredStaffNote(null)}
+              style={{ cursor: 'pointer' }}
+            >
+              {/* Invisible hover area */}
+              <rect
+                x={noteX - 50}
+                y={getNoteY(bottomNote.note.replace('#', '').replace('b', ''), bottomNote.octave) - 25}
+                width={100}
+                height={50}
+                fill="transparent"
+              />
               {bottomHasSharp && (
                 <text
                   x={noteX - 40}
                   y={getNoteY(bottomNote.note.replace('#', ''), bottomNote.octave) + 14}
                   fontSize={42}
                   fontFamily="Bravura, Leland, serif"
-                  fill="#222"
+                  fill={hoveredStaffNote === 'bottom' ? '#f97316' : '#222'}
                 >
                   ♯
                 </text>
@@ -331,7 +489,7 @@ export function IntervalGame() {
                   y={getNoteY(bottomNote.note.replace('b', ''), bottomNote.octave) + 10}
                   fontSize={44}
                   fontFamily="Bravura, Leland, serif"
-                  fill="#222"
+                  fill={hoveredStaffNote === 'bottom' ? '#f97316' : '#222'}
                 >
                   ♭
                 </text>
@@ -342,7 +500,7 @@ export function IntervalGame() {
                   cy={getNoteY(bottomNote.note.replace('#', '').replace('b', ''), bottomNote.octave)}
                   rx={14}
                   ry={10}
-                  fill="#222"
+                  fill={hoveredStaffNote === 'bottom' ? '#f97316' : '#222'}
                 />
                 <ellipse
                   cx={noteX}
@@ -355,15 +513,27 @@ export function IntervalGame() {
               </g>
             </g>
 
-            {/* Top note */}
-            <g>
+            {/* Top note with hover detection */}
+            <g
+              onMouseEnter={() => setHoveredStaffNote('top')}
+              onMouseLeave={() => setHoveredStaffNote(null)}
+              style={{ cursor: 'pointer' }}
+            >
+              {/* Invisible hover area */}
+              <rect
+                x={noteX - 50}
+                y={getNoteY(topNote.note.replace('#', '').replace('b', ''), topNote.octave) - 25}
+                width={100}
+                height={50}
+                fill="transparent"
+              />
               {topHasSharp && (
                 <text
                   x={noteX - 40}
                   y={getNoteY(topNote.note.replace('#', ''), topNote.octave) + 14}
                   fontSize={42}
                   fontFamily="Bravura, Leland, serif"
-                  fill="#222"
+                  fill={hoveredStaffNote === 'top' ? '#f97316' : '#222'}
                 >
                   ♯
                 </text>
@@ -374,7 +544,7 @@ export function IntervalGame() {
                   y={getNoteY(topNote.note.replace('b', ''), topNote.octave) + 10}
                   fontSize={44}
                   fontFamily="Bravura, Leland, serif"
-                  fill="#222"
+                  fill={hoveredStaffNote === 'top' ? '#f97316' : '#222'}
                 >
                   ♭
                 </text>
@@ -385,7 +555,7 @@ export function IntervalGame() {
                   cy={getNoteY(topNote.note.replace('#', '').replace('b', ''), topNote.octave)}
                   rx={14}
                   ry={10}
-                  fill="#222"
+                  fill={hoveredStaffNote === 'top' ? '#f97316' : '#222'}
                 />
                 <ellipse
                   cx={noteX}
@@ -397,6 +567,20 @@ export function IntervalGame() {
                 />
               </g>
             </g>
+
+            {/* Inversion label when hovering */}
+            {hoveredStaffNote && inversionInterval && (
+              <text
+                x={noteX + 60}
+                y={(getNoteY(bottomNote.note.replace('#', '').replace('b', ''), bottomNote.octave) +
+                    getNoteY(topNote.note.replace('#', '').replace('b', ''), topNote.octave)) / 2 + 5}
+                fontSize={14}
+                fill="#3b82f6"
+                fontWeight="500"
+              >
+                Inversion: {inversionInterval.short} ({inversionSemitones})
+              </text>
+            )}
           </svg>
         </div>
 
@@ -423,6 +607,125 @@ export function IntervalGame() {
               <div className="text-xs opacity-75">{interval.name}</div>
             </button>
           ))}
+        </div>
+
+        {/* Collapsible Semitones Reference Key */}
+        <div className="w-full max-w-2xl">
+          <button
+            onClick={() => setShowSemitonesKey(!showSemitonesKey)}
+            className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors mb-2"
+          >
+            {showSemitonesKey ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            <span>Semitones Reference</span>
+          </button>
+
+          {showSemitonesKey && (
+            <div className="bg-zinc-800/50 rounded-lg p-4 border border-zinc-700">
+              <div className="grid grid-cols-4 gap-2 text-sm">
+                {intervals.map((interval) => (
+                  <div
+                    key={interval.short}
+                    className="flex justify-between px-3 py-1.5 rounded text-zinc-300"
+                  >
+                    <span className="font-medium">{interval.short}</span>
+                    <span className="text-zinc-500">{interval.semitones} semitone{interval.semitones !== 1 ? 's' : ''}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 2-Octave Piano Keyboard */}
+        <div
+          className="relative rounded-lg overflow-hidden"
+          style={{ width: pianoWidth, height: whiteKeyHeight }}
+          onMouseLeave={() => setHoveredKey(null)}
+        >
+          {/* White Keys (2 octaves = 14 keys) */}
+          <div className="flex h-full">
+            {whiteKeys.map((_note, index) => {
+              // Calculate semitone index (C=0, D=2, E=4, F=5, G=7, A=9, B=11)
+              const whiteKeyToSemitone = [0, 2, 4, 5, 7, 9, 11]
+              const octaveOffset = index >= 7 ? 12 : 0
+              const semitoneIndex = whiteKeyToSemitone[index % 7] + octaveOffset
+              const isRoot = selectedRootKey === semitoneIndex
+              const isHovered = hoveredKey === semitoneIndex && selectedRootKey !== null && !isRoot
+
+              return (
+                <div
+                  key={index}
+                  onMouseEnter={() => setHoveredKey(semitoneIndex)}
+                  onClick={() => setSelectedRootKey(isRoot ? null : semitoneIndex)}
+                  className={`
+                    flex-1 border rounded-b-md
+                    flex items-end justify-center pb-2
+                    font-medium text-xs transition-colors cursor-pointer
+                    ${isRoot
+                      ? 'bg-orange-400 border-orange-500'
+                      : isHovered
+                      ? 'bg-blue-100 border-blue-300'
+                      : 'bg-white border-zinc-300 hover:bg-zinc-100'
+                    }
+                  `}
+                >
+                  <span className={`${isRoot ? 'text-orange-800' : 'text-zinc-400'}`}>
+                    {getNoteNameFromSemitone(semitoneIndex)}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Black Keys (2 octaves) */}
+          {blackKeyPositions.map(({ note, position }, index) => {
+            // Calculate semitone index for black keys
+            const blackKeyToSemitone = [1, 3, 6, 8, 10] // C#, D#, F#, G#, A#
+            const octaveOffset = position >= 7 ? 12 : 0
+            const semitoneIndex = blackKeyToSemitone[index % 5] + octaveOffset
+            const isRoot = selectedRootKey === semitoneIndex
+            const isHovered = hoveredKey === semitoneIndex && selectedRootKey !== null && !isRoot
+
+            return (
+              <div
+                key={`${note}-${index}`}
+                onMouseEnter={() => setHoveredKey(semitoneIndex)}
+                onClick={() => setSelectedRootKey(isRoot ? null : semitoneIndex)}
+                className={`
+                  absolute top-0 rounded-b-md cursor-pointer
+                  transition-colors
+                  ${isRoot
+                    ? 'bg-orange-500'
+                    : isHovered
+                    ? 'bg-blue-600'
+                    : 'bg-zinc-900 hover:bg-zinc-700'
+                  }
+                `}
+                style={{
+                  left: (position + 1) * whiteKeyWidth - blackKeyWidth / 2,
+                  width: blackKeyWidth,
+                  height: blackKeyHeight,
+                }}
+              />
+            )
+          })}
+
+          {/* Instructions or interval display */}
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 text-sm font-medium">
+            {selectedRootKey === null ? (
+              <span className="bg-zinc-800 text-zinc-300 px-3 py-1 rounded-full">
+                Click a key to set root
+              </span>
+            ) : hoveredInterval ? (
+              <span className="bg-blue-500 text-white px-3 py-1 rounded-full shadow-lg">
+                {hoveredInterval.name} ({hoveredInterval.semitones} semitones)
+              </span>
+            ) : (
+              <span className="bg-orange-500 text-white px-3 py-1 rounded-full">
+                Root: {getNoteNameFromSemitone(selectedRootKey)} — hover to see intervals
+              </span>
+            )}
+          </div>
         </div>
       </div>
 

@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Heart, Music, ZoomIn, ZoomOut, Pencil, Columns2, Square, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ArrowLeft, Heart, Music, ZoomIn, ZoomOut, Pencil, Columns2, Square, ChevronLeft, ChevronRight, Plus, X, Maximize2, Minimize2 } from 'lucide-react'
 import { EditSongModal } from '../components/EditSongModal'
 import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
-import { db, type Song as SongType, type SheetMusic, type Category, type Annotation, type StickyColor, type AnnotationType } from '../lib/db'
+import { db, type Song as SongType, type SheetMusic, type Category, type Annotation, type StickyColor, type AnnotationType, type TextNote } from '../lib/db'
 import { AnnotationLayer } from '../components/AnnotationLayer'
 import { AnnotationToolbar } from '../components/AnnotationToolbar'
 
@@ -16,19 +16,23 @@ interface SheetMusicViewerProps {
   url: string
   songId: string
   sheetMusicId: string
+  isFullscreen: boolean
+  setIsFullscreen: (fullscreen: boolean) => void
 }
 
 // High-quality PDF viewer with horizontal scrolling, 2-page spread, and annotations
-function SheetMusicViewer({ url, songId, sheetMusicId }: SheetMusicViewerProps) {
+function SheetMusicViewer({ url, songId, sheetMusicId, isFullscreen, setIsFullscreen }: SheetMusicViewerProps) {
   const [numPages, setNumPages] = useState<number>(0)
   const [zoom, setZoom] = useState<number>(1)
   const [twoPageView, setTwoPageView] = useState<boolean>(false)
   const [currentSpread, setCurrentSpread] = useState<number>(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const targetZoomRef = useRef(1)
-  const animationFrameRef = useRef<number | null>(null)
   const [containerHeight, setContainerHeight] = useState<number>(600)
+
+  // Zoom: renderZoom is for PDF quality, visualZoom is for smooth CSS transitions
+  const [renderZoom, setRenderZoom] = useState<number>(1)
+  const renderZoomTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Annotation state
   const [annotations, setAnnotations] = useState<Annotation[]>([])
@@ -36,6 +40,98 @@ function SheetMusicViewer({ url, songId, sheetMusicId }: SheetMusicViewerProps) 
   const [showAnnotations, setShowAnnotations] = useState(true)
   const [activeTool, setActiveTool] = useState<AnnotationType | string | null>(null)
   const [activeColor, setActiveColor] = useState<StickyColor>('yellow')
+  const [textFontSize, setTextFontSize] = useState<number>(18)
+
+  // Text notes state (separate from annotations)
+  const [textNotes, setTextNotes] = useState<TextNote[]>([])
+  const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null)
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
+  const notesContainerRef = useRef<HTMLDivElement>(null)
+
+  // Load text notes
+  const loadTextNotes = useCallback(async () => {
+    const notes = await db.textNotes
+      .where('sheetMusicId')
+      .equals(sheetMusicId)
+      .toArray()
+    setTextNotes(notes)
+  }, [sheetMusicId])
+
+  useEffect(() => {
+    loadTextNotes()
+  }, [loadTextNotes])
+
+  // Add new text note
+  const addTextNote = async () => {
+    const newNote: TextNote = {
+      id: crypto.randomUUID(),
+      sheetMusicId,
+      x: 5,
+      y: 10 + textNotes.length * 5,
+      content: '',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }
+    await db.textNotes.add(newNote)
+    setTextNotes(prev => [...prev, newNote])
+    setEditingNoteId(newNote.id)
+  }
+
+  // Update text note
+  const updateTextNote = async (id: string, updates: Partial<TextNote>) => {
+    await db.textNotes.update(id, { ...updates, updatedAt: new Date() })
+    setTextNotes(prev => prev.map(n => n.id === id ? { ...n, ...updates } : n))
+  }
+
+  // Delete text note
+  const deleteTextNote = async (id: string) => {
+    await db.textNotes.delete(id)
+    setTextNotes(prev => prev.filter(n => n.id !== id))
+  }
+
+  // Drag handlers for text notes
+  const handleNoteDragStart = (id: string, e: React.MouseEvent) => {
+    const note = textNotes.find(n => n.id === id)
+    if (!note || !notesContainerRef.current) return
+
+    const rect = notesContainerRef.current.getBoundingClientRect()
+    setDraggingNoteId(id)
+    setDragOffset({
+      x: e.clientX - (note.x / 100) * rect.width,
+      y: e.clientY - (note.y / 100) * rect.height,
+    })
+  }
+
+  useEffect(() => {
+    if (!draggingNoteId) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!notesContainerRef.current) return
+      const rect = notesContainerRef.current.getBoundingClientRect()
+      const newX = ((e.clientX - dragOffset.x) / rect.width) * 100
+      const newY = ((e.clientY - dragOffset.y) / rect.height) * 100
+
+      setTextNotes(prev => prev.map(n =>
+        n.id === draggingNoteId ? { ...n, x: newX, y: newY } : n
+      ))
+    }
+
+    const handleMouseUp = async () => {
+      const note = textNotes.find(n => n.id === draggingNoteId)
+      if (note) {
+        await db.textNotes.update(note.id, { x: note.x, y: note.y, updatedAt: new Date() })
+      }
+      setDraggingNoteId(null)
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [draggingNoteId, dragOffset, textNotes])
 
   // Load annotations
   const loadAnnotations = useCallback(async () => {
@@ -64,22 +160,36 @@ function SheetMusicViewer({ url, songId, sheetMusicId }: SheetMusicViewerProps) 
 
   // Calculate page dimensions based on container height
   const devicePixelRatio = window.devicePixelRatio || 1
-  // In 2-page view, each page is smaller to fit two side by side
-  const pageHeight = Math.max(400, containerHeight - 40) * zoom
+  // Render PDF at renderZoom level for quality, use CSS transform for smooth transitions
+  const basePageHeight = Math.max(400, containerHeight - 40)
+  const pageHeight = basePageHeight * renderZoom
+
+  // Visual scale factor (difference between current zoom and rendered zoom)
+  const visualScale = zoom / renderZoom
+
+  // Debounced render zoom update - re-render PDF after zooming stops
+  const scheduleRenderUpdate = useCallback((newZoom: number) => {
+    if (renderZoomTimeoutRef.current) {
+      clearTimeout(renderZoomTimeoutRef.current)
+    }
+    renderZoomTimeoutRef.current = setTimeout(() => {
+      setRenderZoom(newZoom)
+    }, 150) // Wait 150ms after last zoom change
+  }, [])
 
   const zoomIn = useCallback(() => {
     const newZoom = Math.min(zoom + 0.25, 3)
-    targetZoomRef.current = newZoom
     setZoom(newZoom)
-  }, [zoom])
+    scheduleRenderUpdate(newZoom)
+  }, [zoom, scheduleRenderUpdate])
   const zoomOut = useCallback(() => {
     const newZoom = Math.max(zoom - 0.25, 0.5)
-    targetZoomRef.current = newZoom
     setZoom(newZoom)
-  }, [zoom])
+    scheduleRenderUpdate(newZoom)
+  }, [zoom, scheduleRenderUpdate])
   const resetZoom = useCallback(() => {
-    targetZoomRef.current = 1
     setZoom(1)
+    setRenderZoom(1) // Immediate for reset
   }, [])
 
   // Calculate spreads (pairs of pages for 2-page view)
@@ -141,43 +251,22 @@ function SheetMusicViewer({ url, songId, sheetMusicId }: SheetMusicViewerProps) 
     const container = scrollContainerRef.current
     if (!container) return
 
-    const smoothZoom = () => {
-      setZoom(currentZoom => {
-        const target = targetZoomRef.current
-        const diff = target - currentZoom
-        // Ease toward target (lerp)
-        if (Math.abs(diff) < 0.01) {
-          animationFrameRef.current = null
-          return target
-        }
-        animationFrameRef.current = requestAnimationFrame(smoothZoom)
-        return currentZoom + diff * 0.15
-      })
-    }
-
     const handleWheel = (e: WheelEvent) => {
       // ctrlKey is set when using trackpad pinch gesture
       if (e.ctrlKey) {
         e.preventDefault()
-        // Accumulate delta into target zoom
-        const delta = -e.deltaY * 0.008
-        targetZoomRef.current = Math.max(0.5, Math.min(3, targetZoomRef.current + delta))
-
-        // Start smooth animation if not already running
-        if (!animationFrameRef.current) {
-          animationFrameRef.current = requestAnimationFrame(smoothZoom)
-        }
+        const delta = -e.deltaY * 0.01
+        const newZoom = Math.max(0.5, Math.min(3, zoom + delta))
+        setZoom(newZoom)
+        scheduleRenderUpdate(newZoom)
       }
     }
 
     container.addEventListener('wheel', handleWheel, { passive: false })
     return () => {
       container.removeEventListener('wheel', handleWheel)
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current)
-      }
     }
-  }, [])
+  }, [zoom, scheduleRenderUpdate])
 
   // Scroll to current spread when it changes
   useEffect(() => {
@@ -230,7 +319,7 @@ function SheetMusicViewer({ url, songId, sheetMusicId }: SheetMusicViewerProps) 
             </button>
           </div>
 
-          {/* Center: Zoom controls */}
+          {/* Center: Zoom controls + Fullscreen */}
           <div className="flex items-center gap-2">
             <button
               onClick={zoomOut}
@@ -254,6 +343,14 @@ function SheetMusicViewer({ url, songId, sheetMusicId }: SheetMusicViewerProps) 
               title="Zoom in (Cmd +)"
             >
               <ZoomIn size={18} />
+            </button>
+            <div className="w-px h-5 bg-zinc-700 mx-1" />
+            <button
+              onClick={() => setIsFullscreen(!isFullscreen)}
+              className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+              title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            >
+              {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
             </button>
           </div>
 
@@ -291,23 +388,89 @@ function SheetMusicViewer({ url, songId, sheetMusicId }: SheetMusicViewerProps) 
             setActiveTool={setActiveTool}
             activeColor={activeColor}
             setActiveColor={setActiveColor}
+            textFontSize={textFontSize}
+            setTextFontSize={setTextFontSize}
             sheetMusicId={sheetMusicId}
             onClearAll={loadAnnotations}
           />
         </div>
       </div>
 
-      {/* PDF Content - horizontal scroll */}
-      <div
-        ref={scrollContainerRef}
-        className="flex-1 overflow-x-auto overflow-y-auto"
-        style={{
-          scrollSnapType: 'x mandatory',
-          scrollbarWidth: 'none', // Firefox
-          msOverflowStyle: 'none', // IE/Edge
-        }}
-      >
-        <Document
+      {/* PDF Content with text notes */}
+      <div ref={notesContainerRef} className="flex-1 relative">
+        {/* Add note button */}
+        <button
+          onClick={addTextNote}
+          className="absolute top-2 left-2 z-20 p-1.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors backdrop-blur-sm"
+          title="Add text note"
+        >
+          <Plus size={16} />
+        </button>
+
+        {/* Text notes layer */}
+        {textNotes.map(note => (
+          <div
+            key={note.id}
+            className="absolute z-10 group"
+            style={{
+              left: `${note.x}%`,
+              top: `${note.y}%`,
+              cursor: draggingNoteId === note.id ? 'grabbing' : 'grab',
+            }}
+            onMouseDown={(e) => {
+              if ((e.target as HTMLElement).tagName !== 'INPUT') {
+                handleNoteDragStart(note.id, e)
+              }
+            }}
+          >
+            <div className="flex items-start gap-1">
+              {editingNoteId === note.id ? (
+                <input
+                  type="text"
+                  value={note.content}
+                  onChange={(e) => updateTextNote(note.id, { content: e.target.value })}
+                  onBlur={() => setEditingNoteId(null)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === 'Escape') {
+                      setEditingNoteId(null)
+                    }
+                  }}
+                  autoFocus
+                  placeholder="note..."
+                  className="bg-transparent border border-white/60 rounded px-2 py-1 text-white placeholder-white/40 focus:outline-none focus:border-white min-w-[120px]"
+                  style={{ fontFamily: 'Times New Roman, serif', fontSize: '14px' }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <div
+                  className="border border-white/40 rounded px-2 py-1 text-white min-w-[60px] min-h-[28px] hover:border-white/60 transition-colors"
+                  style={{ fontFamily: 'Times New Roman, serif', fontSize: '14px' }}
+                  onDoubleClick={() => setEditingNoteId(note.id)}
+                >
+                  {note.content || <span className="text-white/40 italic">note...</span>}
+                </div>
+              )}
+              <button
+                onClick={() => deleteTextNote(note.id)}
+                className="p-1 rounded text-white/40 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+        ))}
+
+        {/* PDF scroll container */}
+        <div
+          ref={scrollContainerRef}
+          className="absolute inset-0 overflow-x-auto overflow-y-auto"
+          style={{
+            scrollSnapType: 'x mandatory',
+            scrollbarWidth: 'none', // Firefox
+            msOverflowStyle: 'none', // IE/Edge
+          }}
+        >
+          <Document
           file={url}
           onLoadSuccess={({ numPages }) => setNumPages(numPages)}
           loading={
@@ -329,7 +492,15 @@ function SheetMusicViewer({ url, songId, sheetMusicId }: SheetMusicViewerProps) 
                 style={{ scrollSnapAlign: 'start' }}
               >
                 {pageNums.map((pageNum) => (
-                  <div key={pageNum} className="relative overflow-visible">
+                  <div
+                    key={pageNum}
+                    className="relative overflow-visible"
+                    style={{
+                      transform: visualScale !== 1 ? `scale(${visualScale})` : undefined,
+                      transformOrigin: 'center center',
+                      transition: 'transform 0.05s ease-out',
+                    }}
+                  >
                     <Page
                       pageNumber={pageNum}
                       height={pageHeight}
@@ -348,6 +519,7 @@ function SheetMusicViewer({ url, songId, sheetMusicId }: SheetMusicViewerProps) 
                         isEditing={isAnnotating}
                         activeTool={activeTool}
                         activeColor={activeColor}
+                        textFontSize={textFontSize}
                         onAnnotationsChange={loadAnnotations}
                         onToolUsed={() => setActiveTool(null)}
                         zoom={zoom}
@@ -359,6 +531,7 @@ function SheetMusicViewer({ url, songId, sheetMusicId }: SheetMusicViewerProps) 
             ))}
           </div>
         </Document>
+        </div>
       </div>
     </div>
   )
@@ -384,6 +557,7 @@ export function Song() {
   const [error, setError] = useState<string | null>(null)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -501,8 +675,8 @@ export function Song() {
 
   return (
     <div
-      className="flex flex-col h-[calc(100vh-7rem)]"
-      style={{
+      className={`flex flex-col ${isFullscreen ? 'h-screen fixed inset-0 z-50 bg-zinc-950' : 'h-[calc(100vh-7rem)]'}`}
+      style={isFullscreen ? {} : {
         // Break out of max-w-7xl container
         width: '100vw',
         marginLeft: 'calc(-50vw + 50%)',
@@ -510,8 +684,9 @@ export function Song() {
         paddingRight: '1.5rem',
       }}
     >
-      {/* Compact Header */}
-      <div className="flex items-center gap-4 pb-4 border-b border-zinc-800 shrink-0 max-w-7xl mx-auto w-full">
+      {/* Compact Header - hidden in fullscreen */}
+      {!isFullscreen && (
+      <div className="flex items-center gap-4 pb-4 border-b border-zinc-800 shrink-0 max-w-7xl mx-auto w-full px-6">
         <button
           onClick={() => navigate('/library')}
           className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
@@ -578,10 +753,17 @@ export function Song() {
           <Heart size={20} fill={song.favorite ? 'currentColor' : 'none'} />
         </button>
       </div>
+      )}
 
       {/* Main Content - PDF Viewer */}
       {pdfSheet ? (
-        <SheetMusicViewer url={pdfSheet.url} songId={song.id} sheetMusicId={pdfSheet.id} />
+        <SheetMusicViewer
+          url={pdfSheet.url}
+          songId={song.id}
+          sheetMusicId={pdfSheet.id}
+          isFullscreen={isFullscreen}
+          setIsFullscreen={setIsFullscreen}
+        />
       ) : sheetMusicUrls.length > 0 ? (
         // Image sheet music
         <div className="flex-1 overflow-auto py-8">

@@ -7,6 +7,9 @@ import {
   X,
   ChevronDown,
   Trash2,
+  Type,
+  Minus,
+  Plus,
 } from 'lucide-react'
 import type { StickyColor, AnnotationType } from '../lib/db'
 import { db } from '../lib/db'
@@ -20,6 +23,8 @@ interface AnnotationToolbarProps {
   setActiveTool: (tool: AnnotationType | string | null) => void
   activeColor: StickyColor
   setActiveColor: (color: StickyColor) => void
+  textFontSize: number
+  setTextFontSize: (size: number) => void
   sheetMusicId: string
   onClearAll: () => void
 }
@@ -58,6 +63,8 @@ export function AnnotationToolbar({
   setActiveTool,
   activeColor,
   setActiveColor,
+  textFontSize,
+  setTextFontSize,
   sheetMusicId,
   onClearAll,
 }: AnnotationToolbarProps) {
@@ -117,7 +124,7 @@ export function AnnotationToolbar({
           <div className="relative">
             <div className="flex">
               <button
-                onClick={() => setActiveTool('sticky')}
+                onClick={() => setActiveTool(activeTool === 'sticky' ? null : 'sticky')}
                 className={`p-2 rounded-l-lg transition-colors ${
                   activeTool === 'sticky'
                     ? 'text-white bg-zinc-700'
@@ -185,7 +192,7 @@ export function AnnotationToolbar({
                     <button
                       key={symbol}
                       onClick={() => {
-                        setActiveTool(symbol)
+                        setActiveTool(activeTool === symbol ? null : symbol)
                         setShowSymbolPicker(false)
                       }}
                       className={`w-9 h-9 flex items-center justify-center text-xl rounded hover:bg-zinc-700 transition-colors ${
@@ -197,6 +204,40 @@ export function AnnotationToolbar({
                     </button>
                   ))}
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* Text tool with font size */}
+          <div className="flex items-center">
+            <button
+              onClick={() => setActiveTool(activeTool === 'text' ? null : 'text')}
+              className={`p-2 rounded-lg transition-colors ${
+                activeTool === 'text'
+                  ? 'text-white bg-zinc-700'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+              }`}
+              title="Add chord text"
+            >
+              <Type size={18} />
+            </button>
+            {activeTool === 'text' && (
+              <div className="flex items-center ml-1 bg-zinc-800 rounded-lg">
+                <button
+                  onClick={() => setTextFontSize(Math.max(12, textFontSize - 2))}
+                  className="p-1.5 text-zinc-400 hover:text-white transition-colors"
+                  title="Decrease font size"
+                >
+                  <Minus size={14} />
+                </button>
+                <span className="text-xs text-zinc-300 w-6 text-center">{textFontSize}</span>
+                <button
+                  onClick={() => setTextFontSize(Math.min(48, textFontSize + 2))}
+                  className="p-1.5 text-zinc-400 hover:text-white transition-colors"
+                  title="Increase font size"
+                >
+                  <Plus size={14} />
+                </button>
               </div>
             )}
           </div>

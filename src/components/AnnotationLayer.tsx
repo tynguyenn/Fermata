@@ -10,6 +10,7 @@ interface AnnotationLayerProps {
   isEditing: boolean
   activeTool: AnnotationType | string | null
   activeColor: StickyColor
+  textFontSize?: number
   onAnnotationsChange: () => void
   onToolUsed?: () => void
   zoom?: number
@@ -563,6 +564,213 @@ function MusicSymbol({
   )
 }
 
+// Text annotation for chords (Times New Roman, transparent)
+function TextAnnotation({
+  annotation,
+  isEditing,
+  isActive,
+  onUpdate,
+  onDelete,
+  onStartEditing,
+  onStopEditing,
+  zoom = 1,
+}: {
+  annotation: Annotation
+  isEditing: boolean
+  isActive: boolean
+  onUpdate: (updates: Partial<Annotation>) => void
+  onDelete: () => void
+  onStartEditing: () => void
+  onStopEditing: () => void
+  zoom?: number
+}) {
+  const [isDragging, setIsDragging] = useState(false)
+  const [isTextEditing, setIsTextEditing] = useState(!annotation.content) // Auto-edit if empty
+  const [localContent, setLocalContent] = useState(annotation.content)
+  const dragStartPos = useRef({ x: 0, y: 0, elemX: 0, elemY: 0 })
+  const textRef = useRef<HTMLDivElement>(null)
+
+  const scale = Math.max(0.4, Math.min(2, zoom))
+  const fontSize = annotation.fontSize || 16
+
+  // Notify parent when we start editing
+  useEffect(() => {
+    if (isTextEditing) {
+      onStartEditing()
+    }
+  }, [isTextEditing, onStartEditing])
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (!isEditing || isTextEditing) return
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(true)
+    dragStartPos.current = {
+      x: e.clientX,
+      y: e.clientY,
+      elemX: annotation.x,
+      elemY: annotation.y,
+    }
+  }
+
+  useEffect(() => {
+    if (!isDragging) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const parent = textRef.current?.parentElement
+      if (!parent) return
+
+      const rect = parent.getBoundingClientRect()
+      const deltaX = ((e.clientX - dragStartPos.current.x) / rect.width) * 100
+      const deltaY = ((e.clientY - dragStartPos.current.y) / rect.height) * 100
+
+      const newX = dragStartPos.current.elemX + deltaX
+      const newY = dragStartPos.current.elemY + deltaY
+
+      onUpdate({ x: newX, y: newY })
+    }
+
+    const handleMouseUp = () => setIsDragging(false)
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isDragging, onUpdate])
+
+  const handleBlur = () => {
+    setIsTextEditing(false)
+    onStopEditing()
+    if (localContent !== annotation.content) {
+      onUpdate({ content: localContent })
+    }
+    // Delete if empty
+    if (!localContent.trim()) {
+      onDelete()
+    }
+  }
+
+  const increaseFontSize = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onUpdate({ fontSize: Math.min(48, fontSize + 2) })
+  }
+
+  const decreaseFontSize = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onUpdate({ fontSize: Math.max(12, fontSize - 2) })
+  }
+
+  return (
+    <div
+      ref={textRef}
+      className={`absolute group ${isDragging ? 'cursor-grabbing z-50' : isEditing && !isTextEditing ? 'cursor-grab' : 'cursor-default'}`}
+      style={{
+        left: `${annotation.x}%`,
+        top: `${annotation.y}%`,
+        transform: `translate(-50%, -50%) scale(${scale})`,
+        transformOrigin: 'center center',
+        zIndex: isActive ? 50 : 10,
+      }}
+      onMouseDown={handleMouseDown}
+    >
+      <div className="relative">
+        {/* Delete button */}
+        {isEditing && !isTextEditing && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete()
+            }}
+            className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100
+              w-5 h-5 flex items-center justify-center rounded-full bg-zinc-800 text-white shadow transition-opacity z-10"
+          >
+            <X size={12} />
+          </button>
+        )}
+
+        {/* Font size controls - shown when text is being edited */}
+        {isTextEditing && (
+          <div className="absolute -top-7 left-1/2 -translate-x-1/2 flex items-center gap-0.5 bg-zinc-800 rounded-lg shadow-lg px-1 py-0.5">
+            <button
+              onMouseDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                decreaseFontSize(e as unknown as React.MouseEvent)
+              }}
+              className="p-1 text-zinc-300 hover:text-white transition-colors"
+              title="Decrease font size"
+            >
+              <Minus size={12} />
+            </button>
+            <span className="text-xs text-zinc-400 w-5 text-center">{fontSize}</span>
+            <button
+              onMouseDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                increaseFontSize(e as unknown as React.MouseEvent)
+              }}
+              className="p-1 text-zinc-300 hover:text-white transition-colors"
+              title="Increase font size"
+            >
+              <Plus size={12} />
+            </button>
+          </div>
+        )}
+
+        {isTextEditing ? (
+          <input
+            type="text"
+            value={localContent}
+            onChange={(e) => setLocalContent(e.target.value)}
+            onBlur={handleBlur}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                handleBlur()
+              } else if (e.key === 'Escape') {
+                setLocalContent(annotation.content)
+                setIsTextEditing(false)
+                onStopEditing()
+                // Delete if was empty (new annotation)
+                if (!annotation.content.trim()) {
+                  onDelete()
+                }
+              }
+            }}
+            autoFocus
+            placeholder="Cmaj7..."
+            className="bg-transparent border-b-2 border-blue-500 px-1 py-0.5 text-zinc-900 placeholder-zinc-400 focus:outline-none min-w-[40px] text-center"
+            style={{
+              fontFamily: 'Times New Roman, serif',
+              fontSize: fontSize,
+              fontWeight: 500,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <div
+            className={`px-1 text-zinc-900 whitespace-nowrap ${isEditing ? 'hover:bg-zinc-200/50 rounded cursor-pointer' : ''}`}
+            style={{
+              fontFamily: 'Times New Roman, serif',
+              fontSize: fontSize,
+              fontWeight: 500,
+            }}
+            onClick={(e) => {
+              if (isEditing) {
+                e.stopPropagation()
+                setIsTextEditing(true)
+              }
+            }}
+          >
+            {annotation.content}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 const stickyColors: { color: StickyColor; bg: string; name: string }[] = [
   { color: 'yellow', bg: '#fef08a', name: 'Yellow' },
   { color: 'pink', bg: '#fbcfe8', name: 'Pink' },
@@ -578,12 +786,14 @@ export function AnnotationLayer({
   isEditing,
   activeTool,
   activeColor,
+  textFontSize = 16,
   onAnnotationsChange,
   onToolUsed,
   zoom = 1,
 }: AnnotationLayerProps) {
   const layerRef = useRef<HTMLDivElement>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; percentX: number; percentY: number } | null>(null)
+  const [editingTextId, setEditingTextId] = useState<string | null>(null)
 
   const pageAnnotations = annotations.filter((a) => a.page === page)
 
@@ -681,6 +891,30 @@ export function AnnotationLayer({
       return
     }
 
+    if (activeTool === 'text') {
+      // Don't create new text if one is being edited
+      if (editingTextId) return
+
+      const newId = crypto.randomUUID()
+      const newAnnotation: Annotation = {
+        id: newId,
+        songId,
+        sheetMusicId,
+        page,
+        type: 'text',
+        x,
+        y,
+        content: '',
+        fontSize: textFontSize,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }
+      await db.annotations.add(newAnnotation)
+      setEditingTextId(newId)
+      onAnnotationsChange()
+      return
+    }
+
     if (typeof activeTool === 'string' && activeTool.length <= 2) {
       const newAnnotation: Annotation = {
         id: crypto.randomUUID(),
@@ -740,6 +974,24 @@ export function AnnotationLayer({
                 isEditing={isEditing}
                 onUpdate={(updates) => handleUpdateAnnotation(annotation.id, updates)}
                 onDelete={() => handleDeleteAnnotation(annotation.id)}
+                zoom={zoom}
+              />
+            )
+          }
+          if (annotation.type === 'text') {
+            return (
+              <TextAnnotation
+                key={annotation.id}
+                annotation={annotation}
+                isEditing={isEditing}
+                isActive={editingTextId === annotation.id}
+                onUpdate={(updates) => handleUpdateAnnotation(annotation.id, updates)}
+                onDelete={() => {
+                  handleDeleteAnnotation(annotation.id)
+                  if (editingTextId === annotation.id) setEditingTextId(null)
+                }}
+                onStartEditing={() => setEditingTextId(annotation.id)}
+                onStopEditing={() => setEditingTextId(null)}
                 zoom={zoom}
               />
             )
