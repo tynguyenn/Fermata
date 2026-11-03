@@ -7,6 +7,7 @@ const navItems = [
   { to: '/', label: 'Home' },
   { to: '/library', label: 'Library' },
   { to: '/practice', label: 'Practice' },
+  { to: '/creation', label: 'Creation' },
 ]
 
 export function Layout() {

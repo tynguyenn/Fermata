@@ -118,6 +118,26 @@ export interface Annotation {
   updatedAt: Date
 }
 
+// Video + piano roll overlay project ("Creation" tab).
+// Media blobs are only stored when the user opts in (videos are large);
+// the overlay settings and file names are always kept so tweaks survive a reload.
+export interface CreationProject {
+  id: string
+  title: string
+  videoName?: string
+  audioName?: string
+  midiName?: string
+  midiFile?: ArrayBuffer // small enough to always persist
+  video?: Blob
+  audio?: Blob
+  keepMedia: boolean
+  /** tracked keyboard corners over time (TrackSample[] from lib/tracking) */
+  track?: unknown
+  settings: unknown // OverlaySettings from components/PianoRollOverlay
+  createdAt: Date
+  updatedAt: Date
+}
+
 // Database instance with typed tables
 const db = new Dexie('FermataDB') as Dexie & {
   songs: EntityTable<Song, 'id'>
@@ -128,6 +148,7 @@ const db = new Dexie('FermataDB') as Dexie & {
   songTags: EntityTable<SongTag, 'songId'>
   annotations: EntityTable<Annotation, 'id'>
   textNotes: EntityTable<TextNote, 'id'>
+  creations: EntityTable<CreationProject, 'id'>
 }
 
 db.version(4).stores({
@@ -139,6 +160,11 @@ db.version(4).stores({
   songTags: '[songId+tagId], songId, tagId', // composite primary key
   annotations: 'id, songId, sheetMusicId, page, type, createdAt',
   textNotes: 'id, sheetMusicId, createdAt',
+})
+
+// v5 only adds the creations table — Dexie carries the v4 stores forward.
+db.version(5).stores({
+  creations: 'id, title, updatedAt',
 })
 
 export { db }
